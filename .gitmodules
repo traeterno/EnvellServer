@@ -1,0 +1,3 @@
+[submodule "res/web"]
+	path = res/web
+	url = https://github.com/Rul991/center-world-envell-build
