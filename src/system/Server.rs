@@ -1,0 +1,382 @@
+use std::time::Instant;
+use std::net::{TcpListener, UdpSocket};
+
+use super::WebClient::WebClient;
+use super::Transmission::{ClientMessage, ServerMessage, WebResponse};
+use super::State::State;
+use super::Config::{Config, Permission};
+use super::Client::Client;
+
+pub struct Server
+{
+	listener: TcpListener,
+	webListener: TcpListener,
+	webClient: WebClient,
+	clients: [Client; 5],
+	config: Config,
+	state: State,
+	requests: Vec<(u8, ServerMessage)>,
+	broadcast: Vec<ClientMessage>,
+	udp: UdpSocket,
+	playersState: [[u8; 9]; 5],
+	sendTimer: Instant,
+	recvTimer: Instant
+}
+
+impl Server
+{
+	pub fn getInstance() -> &'static mut Server
+	{
+		static mut INSTANCE: Option<Server> = None;
+		
+		unsafe
+		{
+			if INSTANCE.is_none() { INSTANCE = Some(Self::init()); }
+			INSTANCE.as_mut().expect("Server singleton is not initialized")
+		}
+	}
+
+	pub fn init() -> Self
+	{
+		let config = Config::init();
+		let state = State::init();
+
+		let listener = TcpListener::bind(String::from("0.0.0.0:") + &config.port.to_string());
+		if listener.is_err() { panic!("Failed to create listener: {:?}", listener.unwrap_err()); }
+		let listener = listener.unwrap();
+		let _ = listener.set_nonblocking(true);
+
+		let webListener = TcpListener::bind("0.0.0.0:8080");
+		if webListener.is_err() { panic!("Failed to create web listener: {:?}", webListener.unwrap_err()); }
+		let webListener = webListener.unwrap();
+		let _ = webListener.set_nonblocking(true);
+
+		let clients = [
+			Client::default(),
+			Client::default(),
+			Client::default(),
+			Client::default(),
+			Client::default()
+		];
+
+		let udp = UdpSocket::bind("0.0.0.0:0");
+		if udp.is_err()
+		{
+			panic!("Failed to bind UDP: {:?}", udp.unwrap_err());
+		}
+		let udp = udp.unwrap();
+		let _ = udp.set_nonblocking(true);
+
+		println!("TCP Listener: {}", listener.local_addr().unwrap());
+		println!("UDP Socket: {}", udp.local_addr().unwrap());
+
+		Self
+		{
+			listener,
+			webListener,
+			webClient: WebClient::new(),
+			clients,
+			config,
+			state,
+			requests: vec![],
+			broadcast: vec![],
+			udp,
+			playersState: [[0u8; 9]; 5],
+			sendTimer: Instant::now(),
+			recvTimer: Instant::now()
+		}
+	}
+
+	pub fn debug(&self, msg: String)
+	{
+		if !self.config.debug { return; }
+		println!("{msg}");
+	}
+
+	pub fn listen(&mut self)
+	{
+		if let Ok((tcp, addr)) = self.listener.accept()
+		{
+			let id = self.getAvailablePlayerID();
+			self.debug(format!("New client: {addr}. Trying ID {id}..."));
+			if id != 0
+			{
+				let (name, class) = self.state.getPlayerInfo(addr.ip());
+				if name == "noname" { println!("Unknown client."); }
+				else { println!("Player {name} connected as P{}.", id); }
+
+				self.clients[(id - 1) as usize] = Client::connect(
+					tcp,
+					id,
+					name.clone(),
+					class,
+					self.udp.local_addr().unwrap().port(),
+					self.config.tickRate,
+					self.state.checkpoint.clone()
+				);
+			}
+		}
+
+		if let Ok((tcp, addr)) = self.webListener.accept()
+		{
+			self.debug(format!("New web client: {addr}"));
+			self.webClient.connect(tcp);
+		}
+	}
+
+	pub fn update(&mut self)
+	{
+		if self.recvTimer.elapsed() > self.config.recvTime
+		{
+			if let Some(req) = self.webClient.update()
+			{
+				self.requests.push((0, req));
+			}
+	
+			for c in &mut self.clients
+			{
+				if c.tcp.is_none() { continue; }
+				if let Some(req) = c.receiveTCP()
+				{
+					self.requests.push((c.id, req));
+				}
+			}
+	
+			'udp: loop
+			{
+				let buffer = &mut [0u8; 128];
+				match self.udp.recv_from(buffer)
+				{
+					Ok((size, addr)) =>
+					{
+						if size != 9 { continue; }
+						let id = buffer[0] & 0b00_00_01_11;
+						if self.clients[(id - 1) as usize].udp.is_none()
+						{
+							self.clients[(id - 1) as usize].udp = Some(addr);
+						}
+						self.playersState[(id - 1) as usize] = [buffer[0],
+							buffer[1], buffer[2],
+							buffer[3], buffer[4],
+							buffer[5], buffer[6],
+							buffer[7], buffer[8]
+						];
+					},
+					Err(_) => { break 'udp; }
+				}
+			}
+			self.recvTimer = Instant::now();
+		}
+		
+		self.handleRequests();
+		self.broadcastTCP();
+
+		if self.sendTimer.elapsed() > self.config.sendTime
+		{
+			self.broadcastState();
+			self.sendTimer = Instant::now();
+		}
+	}
+
+	fn handleRequests(&mut self)
+	{
+		for (id, msg) in self.requests.clone()
+		{
+			self.debug(format!("Handling request from P{id}: {msg:?}"));
+			match msg
+			{
+				ServerMessage::Invalid => {},
+				ServerMessage::Register(name) =>
+				{
+					let c = &mut self.clients[(id - 1) as usize];
+					c.name = name.clone();
+
+					c.sendTCP(ClientMessage::Login(
+						id, name.clone(), String::from("unknown"),
+						self.udp.local_addr().unwrap().port(),
+						self.config.tickRate,
+						self.state.checkpoint.clone()
+					));
+
+					self.state.setPlayerInfo(
+						c.tcp.as_mut().unwrap().peer_addr().unwrap().ip(),
+						name.clone(), String::from("unknown")
+					);
+
+					println!("Welcome, {}(P{})!", name, id);
+				},
+				ServerMessage::Disconnected =>
+				{
+					if id == 0
+					{
+						println!("Web client disconnected.");
+						self.webClient.disconnect();
+					}
+					else
+					{
+						println!("P{} disconnected.", id);
+						self.clients[(id - 1) as usize] = Client::default();
+						self.playersState[(id - 1) as usize][0] = id;
+						self.broadcast.push(ClientMessage::Disconnected(id));
+					}
+				},
+				ServerMessage::Chat(msg) =>
+				{
+					println!("{msg}");
+					let mut text = msg.clone();
+					let c = text.remove(0);
+					if c == '/' { self.cmd(id, text); }
+					else
+					{
+						let n =
+							if id == 0 { String::from("WebClient") }
+							else { self.clients[(id - 1) as usize].name.clone() };
+						self.broadcast.push(ClientMessage::Chat(n + ": " + &msg));
+					}
+				},
+				ServerMessage::PlayersList =>
+				{
+					if id == 0
+					{
+						let mut obj = json::JsonValue::new_array();
+						for c in &self.clients
+						{
+							if c.id == 0 { continue; }
+							let mut entry = json::JsonValue::new_object();
+
+							let _ = entry.insert("id", c.id);
+							let _ = entry.insert("className", c.class.clone());
+							let _ = entry.insert("name", c.name.clone());
+
+							let mut hp = json::JsonValue::new_object();
+							let _ = hp.insert("current", 100);
+							let _ = hp.insert("max", 100);
+
+							let mut mana = json::JsonValue::new_object();
+							let _ = mana.insert("current", 100);
+							let _ = mana.insert("max", 100);
+
+							let _ = entry.insert("hp", hp);
+							let _ = entry.insert("mana", mana);
+
+							let _ = obj.push(entry);
+						}
+						let msg = json::stringify_pretty(obj, 4);
+						self.webClient.sendResponse(
+							WebResponse::Ok(msg, "text/json".to_string())
+						);
+					}
+				},
+				ServerMessage::SaveGame(checkpoint) =>
+				{
+					println!("Game saved on {checkpoint}.");
+					self.save(checkpoint);
+				}
+			}
+		}
+		self.requests.clear();
+	}
+
+	fn broadcastTCP(&mut self)
+	{
+		for msg in &self.broadcast
+		{
+			for c in &mut self.clients
+			{
+				c.sendTCP(msg.clone());
+			}
+		}
+		self.broadcast.clear();
+	}
+
+	fn broadcastState(&mut self)
+	{
+		for i in 0..5
+		{
+			let addr = self.clients[i].udp;
+			if addr.is_none() { continue; }
+			let addr = addr.unwrap();
+
+			let mut buffer: Vec<u8> = vec![];
+			for id in 0..5
+			{
+				if self.playersState[id][0] == 0 || id == i { continue; }
+				buffer.append(&mut self.playersState[id].to_vec());
+			}
+			if buffer.len() == 0 { continue; }
+
+			let _ = self.udp.send_to(&buffer, addr);
+		}
+	}
+
+	fn save(&self, checkpoint: String)
+	{
+		self.config.save();
+		self.state.save(checkpoint);
+	}
+	
+	fn getAvailablePlayerID(&self) -> u8
+	{
+		for i in 0..5
+		{
+			if self.clients[i].id == 0 { return (i + 1) as u8; }
+		}
+		0
+	}
+
+	fn getPlayerID(&self, name: &str) -> u8
+	{
+		for i in 0..5
+		{
+			if self.clients[i].name == name { return (i + 1) as u8; }
+		}
+		0
+	}
+
+	pub fn cmd(&mut self, executor: u8, txt: String)
+	{
+		let mut args = txt.split(" ");
+		if executor == 0
+		{
+			println!("WebClient used command: {txt}");
+		}
+		else
+		{
+			let name = &self.clients[(executor - 1) as usize].name;
+			let p = self.config.getPermission(&name);
+			println!("P{executor} ({name}, {}) called '{txt}'", p.toString());
+			
+			let c = args.nth(0).unwrap_or(" ");
+
+			if c == "getPosition" && p.check(Permission::Admin)
+			{
+				let n = args.nth(0).unwrap_or(&name);
+				let id = self.getPlayerID(n);
+
+				let pos = if id == 0 { "Not found" } else
+				{
+					let s = &self.playersState[(id - 1) as usize];
+					let x = u16::from_le_bytes([s[1], s[2]]);
+					let y = u16::from_le_bytes([s[3], s[4]]);
+					&(x.to_string() + " " + &y.to_string())
+				};
+
+				self.broadcast.push(ClientMessage::Chat(
+					String::from("[Player ") + name +
+					" requested position of " + n + "] " +
+					pos
+				));
+			}
+			if c == "setPosition" && p.check(Permission::Admin)
+			{
+				let n = args.nth(0).unwrap_or(&name);
+				let id = self.getPlayerID(n);
+				if id == 0 { return; }
+				let x = args.nth(0).unwrap_or("0").parse::<u16>().unwrap();
+				let y = args.nth(0).unwrap_or("0").parse::<u16>().unwrap();
+				println!("P{id}({n}) moved to ({x};{y})");
+				self.clients[(id - 1) as usize].sendTCP(ClientMessage::SetPosition(x, y));
+			}
+		}
+	}
+}
