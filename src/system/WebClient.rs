@@ -140,8 +140,19 @@ impl WebClient
 			}
 			return None;
 		}
-		else if cmd == "getChat" { return Some(ServerMessage::ChatHistory); }
+		else if cmd == "getChat"
+		{
+			for (id, value) in data.entries()
+			{
+				if id == "messagesLength"
+				{
+					return Some(ServerMessage::ChatHistory(value.as_usize().unwrap_or(0)));
+				}
+			}
+			return None;
+		}
 		else if cmd == "state" { return Some(ServerMessage::GameState); }
+		else if cmd == "chatLength" { return Some(ServerMessage::ChatLength); }
 		else
 		{
 			println!("Unknown command: {cmd}");

@@ -9,8 +9,9 @@ pub enum ServerMessage
 	Disconnected,
 	PlayersList,
 	SaveGame(String),
-	ChatHistory,
-	GameState
+	ChatHistory(usize),
+	GameState,
+	ChatLength
 }
 
 impl ServerMessage

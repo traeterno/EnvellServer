@@ -289,13 +289,16 @@ impl Server
 					println!("Game saved on {checkpoint}.");
 					self.save(checkpoint);
 				},
-				ServerMessage::ChatHistory =>
+				ServerMessage::ChatHistory(mut start) =>
 				{
+					if start > self.state.chatHistory.len() { start = 0; }
+					let count = self.state.chatHistory.len() - start;
 					let mut buf = json::JsonValue::new_array();
-					for i in 0..self.state.chatHistory.len()
+					for i in start..self.state.chatHistory.len()
 					{
 						let (user, msg) = &self.state.chatHistory[
-							self.state.chatHistory.len() - 1 - i
+							if count > 1 { self.state.chatHistory.len() - 1 - i }
+							else { i }
 						];
 						let mut obj = json::JsonValue::new_object();
 						let _ = obj.insert("user", user.clone());
@@ -322,6 +325,12 @@ impl Server
 
 					WebClient::sendResponse(WebResponse::Ok(
 						json::stringify(msg), "text/json".to_string()
+					));
+				},
+				ServerMessage::ChatLength =>
+				{
+					WebClient::sendResponse(WebResponse::Ok(
+						self.state.chatHistory.len().to_string(), "text/json".to_string()
 					));
 				}
 			}
