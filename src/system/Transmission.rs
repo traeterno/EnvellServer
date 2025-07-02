@@ -8,7 +8,9 @@ pub enum ServerMessage
 	Chat(String),
 	Disconnected,
 	PlayersList,
-	SaveGame(String)
+	SaveGame(String),
+	ChatHistory,
+	GameState
 }
 
 impl ServerMessage
@@ -111,7 +113,7 @@ impl WebResponse
 			Self::MovedPermanently(path) =>
 				(String::from("HTTP/1.1 301 Moved Permanently") +
 				"\r\nLocation: " + &path).as_bytes().to_vec(),
-			Self::NotFound => String::from("HTTP/1.1 404 Not Found").as_bytes().to_vec()
+			Self::NotFound => String::from("HTTP/1.1 404 Not Found").as_bytes().to_vec(),
 		}
 	}
 }

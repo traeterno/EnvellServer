@@ -1,5 +1,7 @@
 use std::{io::{ErrorKind, Read, Write}, net::TcpStream};
 
+use crate::system::Server::Server;
+
 use super::Transmission::{ServerMessage, WebRequest, WebResponse};
 
 pub struct WebClient
@@ -64,14 +66,14 @@ impl WebClient
 		println!("Handling GET: {data}");
 		if data == "/"
 		{
-			self.sendResponse(
+			WebClient::sendResponse(
 				WebResponse::MovedPermanently(String::from("/index.html")),
 			);
 		}
 		else
 		{
 			let path = String::from("res/web") + &data;
-			self.sendResponse(
+			WebClient::sendResponse(
 				match std::fs::read_to_string(path.clone())
 				{
 					Ok(text) =>
@@ -120,7 +122,6 @@ impl WebClient
 
 	fn parsePost(cmd: String, data: json::JsonValue) -> Option<ServerMessage>
 	{
-		println!("Received command: {cmd}; Arguments:\n{data:#?}");
 		if !data.is_object()
 		{
 			println!("Wrong request: arguments should be provided as object with properties.");
@@ -139,20 +140,33 @@ impl WebClient
 			}
 			return None;
 		}
-		else { println!("Unknown command: {cmd}"); }
-		None
+		else if cmd == "getChat" { return Some(ServerMessage::ChatHistory); }
+		else if cmd == "state" { return Some(ServerMessage::GameState); }
+		else
+		{
+			println!("Unknown command: {cmd}");
+			return Some(ServerMessage::Invalid);
+		}
 	}
 
-	pub fn sendResponse(&mut self, code: WebResponse)
+	pub fn sendResponse(code: WebResponse)
 	{
-		if self.tcp.is_none()
+		std::thread::spawn(||
 		{
-			println!("Tried to send response to empty TCP stream");
-			return;
-		}
-		let tcp = self.tcp.as_mut().unwrap();
-		let msg = code.build();
-		println!("Sending {} bytes to web client", msg.len());
-		let _ = tcp.write_all(&msg);
+			let c = Server::getInstance().getWebClient();
+			if c.tcp.is_none()
+			{
+				println!("Tried to send response to empty TCP stream");
+				return;
+			}
+			let tcp = c.tcp.as_mut().unwrap();
+			let msg = code.build();
+			println!("Sending {} bytes to web client", msg.len());
+			match tcp.write_all(&msg)
+			{
+				Ok(_) => {},
+				Err(x) => { println!("Error occured when sending response: {x:?}"); }
+			}
+		});
 	}
 }

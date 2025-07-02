@@ -185,7 +185,16 @@ impl Server
 			self.debug(format!("Handling request from P{id}: {msg:?}"));
 			match msg
 			{
-				ServerMessage::Invalid => {},
+				ServerMessage::Invalid =>
+				{
+					if id == 0
+					{
+						WebClient::sendResponse(WebResponse::Ok(
+							String::from("{ \"error\": \"Invalid or unknown request\" }"),
+							String::from("text/json")
+						));
+					}
+				},
 				ServerMessage::Register(name) =>
 				{
 					let c = &mut self.clients[(id - 1) as usize];
@@ -231,7 +240,15 @@ impl Server
 						let n =
 							if id == 0 { String::from("WebClient") }
 							else { self.clients[(id - 1) as usize].name.clone() };
-						self.broadcast.push(ClientMessage::Chat(n + ": " + &msg));
+						self.broadcast.push(ClientMessage::Chat(n.clone() + ": " + &msg));
+						self.state.chatHistory.push((n.clone(), msg.clone()));
+						if id == 0
+						{
+							WebClient::sendResponse(WebResponse::Ok(
+								String::from("{ \"msg\": \"") + &n + ": " + &msg + "\" }",
+								"text/json".to_string()
+							));
+						}
 					}
 				},
 				ServerMessage::PlayersList =>
@@ -262,7 +279,7 @@ impl Server
 							let _ = obj.push(entry);
 						}
 						let msg = json::stringify_pretty(obj, 4);
-						self.webClient.sendResponse(
+						WebClient::sendResponse(
 							WebResponse::Ok(msg, "text/json".to_string())
 						);
 					}
@@ -271,6 +288,41 @@ impl Server
 				{
 					println!("Game saved on {checkpoint}.");
 					self.save(checkpoint);
+				},
+				ServerMessage::ChatHistory =>
+				{
+					let mut buf = json::JsonValue::new_array();
+					for i in 0..self.state.chatHistory.len()
+					{
+						let (user, msg) = &self.state.chatHistory[
+							self.state.chatHistory.len() - 1 - i
+						];
+						let mut obj = json::JsonValue::new_object();
+						let _ = obj.insert("user", user.clone());
+						let _ = obj.insert("msg", msg.clone());
+						let _ = buf.push(obj);
+					}
+					WebClient::sendResponse(WebResponse::Ok(
+						json::stringify(buf), "text/json".to_string()
+					));
+				},
+				ServerMessage::GameState =>
+				{
+					let mut msg = json::JsonValue::new_array();
+
+					let _ = msg.push(json::object!
+					{
+						title: "Сохранение",
+						props: json::object!
+						{
+							"Чекпоинт": self.state.checkpoint.as_str(),
+							"Дата сохранения": self.state.date.as_str()
+						}
+					});
+
+					WebClient::sendResponse(WebResponse::Ok(
+						json::stringify(msg), "text/json".to_string()
+					));
 				}
 			}
 		}
@@ -338,45 +390,65 @@ impl Server
 		let mut args = txt.split(" ");
 		if executor == 0
 		{
-			println!("WebClient used command: {txt}");
+			println!("Центр мира вызвал команду: {txt}");
+			WebClient::sendResponse(WebResponse::Ok(
+				String::from("{ \"msg\": \"") + &txt + "\" }",
+				"text/json".to_string()
+			));
 		}
-		else
+		let name =
+			if executor == 0 { &String::from("Центр мира") }
+			else { &self.clients[(executor - 1) as usize].name };
+		let p = self.config.getPermission(&name);
+		println!("P{executor} ({name}, {}) вызвал '{txt}'", p.toString());
+		
+		let c = args.nth(0).unwrap_or(" ");
+
+		if c == "getPosition" && p.check(Permission::Admin)
 		{
-			let name = &self.clients[(executor - 1) as usize].name;
-			let p = self.config.getPermission(&name);
-			println!("P{executor} ({name}, {}) called '{txt}'", p.toString());
+			let n = args.nth(0).unwrap_or(&name);
+			let id = self.getPlayerID(n);
+
+			let pos = if id == 0 { "Не найден" } else
+			{
+				let s = &self.playersState[(id - 1) as usize];
+				let x = u16::from_le_bytes([s[1], s[2]]);
+				let y = u16::from_le_bytes([s[3], s[4]]);
+				&(x.to_string() + " " + &y.to_string())
+			};
 			
-			let c = args.nth(0).unwrap_or(" ");
+			let msg = format!("[Игрок {name} запросил координаты {n}] {pos}");
 
-			if c == "getPosition" && p.check(Permission::Admin)
+			self.broadcast.push(ClientMessage::Chat(msg.clone()));
+			self.state.chatHistory.push((name.to_string(), msg));
+		}
+		else if c == "setPosition" && p.check(Permission::Admin)
+		{
+			let n = args.nth(0).unwrap_or(&name);
+			let id = self.getPlayerID(n);
+			if id == 0
 			{
-				let n = args.nth(0).unwrap_or(&name);
-				let id = self.getPlayerID(n);
-
-				let pos = if id == 0 { "Not found" } else
-				{
-					let s = &self.playersState[(id - 1) as usize];
-					let x = u16::from_le_bytes([s[1], s[2]]);
-					let y = u16::from_le_bytes([s[3], s[4]]);
-					&(x.to_string() + " " + &y.to_string())
-				};
-
-				self.broadcast.push(ClientMessage::Chat(
-					String::from("[Player ") + name +
-					" requested position of " + n + "] " +
-					pos
+				self.state.chatHistory.push((name.clone(),
+					format!("[Игрок {n} не был перемещён: НЕ НАЙДЕН]")
 				));
+				return;
 			}
-			if c == "setPosition" && p.check(Permission::Admin)
-			{
-				let n = args.nth(0).unwrap_or(&name);
-				let id = self.getPlayerID(n);
-				if id == 0 { return; }
-				let x = args.nth(0).unwrap_or("0").parse::<u16>().unwrap();
-				let y = args.nth(0).unwrap_or("0").parse::<u16>().unwrap();
-				println!("P{id}({n}) moved to ({x};{y})");
-				self.clients[(id - 1) as usize].sendTCP(ClientMessage::SetPosition(x, y));
-			}
+			let x = args.nth(0).unwrap_or("0").parse::<u16>().unwrap();
+			let y = args.nth(0).unwrap_or("0").parse::<u16>().unwrap();
+			println!("P{id}({n}) перемещён в ({x};{y})");
+			
+			self.state.chatHistory.push((name.clone(),
+				format!("[Игрок {n} перемещён в ({x};{y})]")
+			));
+			self.clients[(id - 1) as usize].sendTCP(ClientMessage::SetPosition(x, y));
+		}
+		else if c == "getTime"
+		{
+			self.state.chatHistory.push((name.clone(),
+				format!("Текущее время сервера: {}", State::getDateTime())
+			));
 		}
 	}
+
+	pub fn getWebClient(&mut self) -> &mut WebClient { &mut self.webClient }
 }

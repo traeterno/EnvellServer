@@ -156,6 +156,7 @@ impl Config
 
 	pub fn getPermission(&mut self, name: &String) -> Permission
 	{
+		if name == "WebClient" { return Permission::Developer; }
 		self.permissions.get(name).unwrap_or(&Permission::Player).clone()
 	}
 }

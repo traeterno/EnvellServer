@@ -3,7 +3,9 @@ use std::{collections::HashMap, net::IpAddr};
 pub struct State
 {
 	playersList: HashMap<IpAddr, (String, String)>,
-	pub checkpoint: String
+	pub checkpoint: String,
+	pub date: String,
+	pub chatHistory: Vec<(String, String)>
 }
 
 impl State
@@ -13,7 +15,9 @@ impl State
 		Self
 		{
 			playersList: HashMap::new(),
-			checkpoint: String::new()
+			checkpoint: String::new(),
+			date: String::new(),
+			chatHistory: vec![]
 		}
 	}
 	fn load(file: String) -> Self
@@ -53,6 +57,10 @@ impl State
 			{
 				state.checkpoint = section.1.as_str().unwrap_or("").to_string();
 			}
+			if section.0 == "date"
+			{
+				state.date = section.1.as_str().unwrap_or("").to_string();
+			}
 		}
 		
 		state
@@ -82,6 +90,7 @@ impl State
 		let mut state = json::JsonValue::new_object();
 		let _ = state.insert("players", players);
 		let _ = state.insert("checkpoint", checkpoint);
+		let _ = state.insert("date", State::getDateTime());
 
 		let _ = std::fs::write(
 			"res/system/save.json",
@@ -101,5 +110,60 @@ impl State
 	pub fn setPlayerInfo(&mut self, ip: IpAddr, name: String, class: String)
 	{
 		self.playersList.insert(ip, (name, class));
+	}
+
+	pub fn getDateTime() -> String
+	{
+		match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+		{
+			Ok(t) =>
+			{
+				let seconds = t.as_secs();
+				let minutes = seconds / 60; let seconds = seconds % 60;
+				let hours = minutes / 60; let minutes = minutes % 60;
+				let mut days = hours / 24; let hours = hours % 24;
+
+				let mut years = 1970 + days / 1461 * 4; days = days % 1461;
+				while days > 365 { years = years + 1; days = days - 365; }
+
+				let mut month = 1;
+				'getMonth: loop
+				{
+					if (month == 0 || month == 2 || month == 4 ||
+						month == 6 || month == 7 || month == 9 ||
+						month == 11 || month == 12) && days > 31 { month += 1; days -= 31; }
+					else if month == 1
+					{
+						if years % 4 == 0 && days > 29 { month += 1; days -= 29; }
+						else if years % 4 != 0 && days > 28 { month += 1; days -= 28; }
+					}
+					else if (month == 3 || month == 5 || month == 8 || month == 10) && days > 30
+					{
+						month += 1; days -= 30;
+					}
+					else { break 'getMonth; }
+				}
+
+				let m = String::from(match month
+				{
+					1 => "Января",
+					2 => "Февраля",
+					3 => "Марта",
+					4 => "Апреля",
+					5 => "Мая",
+					6 => "Июня",
+					7 => "Июля",
+					8 => "Августа",
+					9 => "Сентября",
+					10 => "Октября",
+					11 => "Ноября",
+					12 => "Декабря",
+					_ => "???"
+				});
+				
+				return format!("{days} {m} {years} - {hours}:{minutes}:{seconds}");
+			},
+			Err(_) => { return String::new(); }
+		}
 	}
 }
