@@ -7,7 +7,7 @@ fn main()
 {
 	let server = Server::getInstance();
 
-	server.debug(format!("Server is running. Waiting for players..."));
+	println!("Server is running. Waiting for players...");
 
 	loop
 	{

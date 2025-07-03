@@ -2,7 +2,7 @@ use std::{collections::HashMap, net::IpAddr};
 
 pub struct State
 {
-	playersList: HashMap<IpAddr, (String, String)>,
+	pub playersList: HashMap<IpAddr, (String, String)>,
 	pub checkpoint: String,
 	pub date: String,
 	pub chatHistory: Vec<(String, String)>

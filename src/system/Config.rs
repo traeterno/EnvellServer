@@ -40,7 +40,6 @@ impl Permission
 
 pub struct Config
 {
-	pub debug: bool,
 	pub maxPlayersCount: u8,
 	pub port: u16,
 	pub tickRate: u8,
@@ -55,7 +54,6 @@ impl Default for Config
 	{
 		Self
 		{
-			debug: false,
 			maxPlayersCount: 0,
 			port: 0,
 			tickRate: 1,
@@ -85,10 +83,6 @@ impl Config
 			{
 				for (name, value) in section.1.entries()
 				{
-					if name == "debug"
-					{
-						state.debug = value.as_bool().unwrap_or(false);
-					}
 					if name == "maxPlayersCount"
 					{
 						state.maxPlayersCount = value.as_u8().unwrap_or(1);
@@ -136,7 +130,6 @@ impl Config
 	pub fn save(&self)
 	{		
 		let mut settings = json::JsonValue::new_object();
-		let _ = settings.insert("debug", self.debug);
 		let _ = settings.insert("maxPlayersCount", self.maxPlayersCount);
 		let _ = settings.insert("port", self.port);
 		let _ = settings.insert("tickRate", self.tickRate);

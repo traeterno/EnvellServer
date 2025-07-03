@@ -11,7 +11,8 @@ pub enum ServerMessage
 	SaveGame(String),
 	ChatHistory(usize),
 	GameState,
-	ChatLength
+	ChatLength,
+	GetSettings
 }
 
 impl ServerMessage

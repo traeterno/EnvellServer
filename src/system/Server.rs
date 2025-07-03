@@ -12,13 +12,13 @@ pub struct Server
 	listener: TcpListener,
 	webListener: TcpListener,
 	webClient: WebClient,
-	clients: [Client; 5],
+	clients: Vec<Client>,
 	config: Config,
 	state: State,
 	requests: Vec<(u8, ServerMessage)>,
 	broadcast: Vec<ClientMessage>,
 	udp: UdpSocket,
-	playersState: [[u8; 9]; 5],
+	playersState: Vec<[u8; 9]>,
 	sendTimer: Instant,
 	recvTimer: Instant
 }
@@ -51,13 +51,11 @@ impl Server
 		let webListener = webListener.unwrap();
 		let _ = webListener.set_nonblocking(true);
 
-		let clients = [
-			Client::default(),
-			Client::default(),
-			Client::default(),
-			Client::default(),
-			Client::default()
-		];
+		let mut clients = vec![];
+		clients.resize_with(config.maxPlayersCount as usize, || { Client::default() });
+
+		let mut playersState = vec![];
+		playersState.resize(config.maxPlayersCount as usize, [0u8; 9]);
 
 		let udp = UdpSocket::bind("0.0.0.0:0");
 		if udp.is_err()
@@ -81,16 +79,10 @@ impl Server
 			requests: vec![],
 			broadcast: vec![],
 			udp,
-			playersState: [[0u8; 9]; 5],
+			playersState,
 			sendTimer: Instant::now(),
 			recvTimer: Instant::now()
 		}
-	}
-
-	pub fn debug(&self, msg: String)
-	{
-		if !self.config.debug { return; }
-		println!("{msg}");
 	}
 
 	pub fn listen(&mut self)
@@ -98,7 +90,7 @@ impl Server
 		if let Ok((tcp, addr)) = self.listener.accept()
 		{
 			let id = self.getAvailablePlayerID();
-			self.debug(format!("New client: {addr}. Trying ID {id}..."));
+			println!("New client: {addr}. Trying ID {id}...");
 			if id != 0
 			{
 				let (name, class) = self.state.getPlayerInfo(addr.ip());
@@ -117,9 +109,8 @@ impl Server
 			}
 		}
 
-		if let Ok((tcp, addr)) = self.webListener.accept()
+		if let Ok((tcp, _)) = self.webListener.accept()
 		{
-			self.debug(format!("New web client: {addr}"));
 			self.webClient.connect(tcp);
 		}
 	}
@@ -182,7 +173,6 @@ impl Server
 	{
 		for (id, msg) in self.requests.clone()
 		{
-			self.debug(format!("Handling request from P{id}: {msg:?}"));
 			match msg
 			{
 				ServerMessage::Invalid =>
@@ -212,13 +202,12 @@ impl Server
 						name.clone(), String::from("unknown")
 					);
 
-					println!("Welcome, {}(P{})!", name, id);
+					println!("Welcome, {name}(P{id})!");
 				},
 				ServerMessage::Disconnected =>
 				{
 					if id == 0
 					{
-						println!("Web client disconnected.");
 						self.webClient.disconnect();
 					}
 					else
@@ -231,7 +220,7 @@ impl Server
 				},
 				ServerMessage::Chat(msg) =>
 				{
-					println!("{msg}");
+					println!("P{id}: {msg}");
 					let mut text = msg.clone();
 					let c = text.remove(0);
 					if c == '/' { self.cmd(id, text); }
@@ -253,36 +242,33 @@ impl Server
 				},
 				ServerMessage::PlayersList =>
 				{
-					if id == 0
+					let mut obj = json::JsonValue::new_array();
+					for c in &self.clients
 					{
-						let mut obj = json::JsonValue::new_array();
-						for c in &self.clients
-						{
-							if c.id == 0 { continue; }
-							let mut entry = json::JsonValue::new_object();
+						if c.id == 0 { continue; }
+						let mut entry = json::JsonValue::new_object();
 
-							let _ = entry.insert("id", c.id);
-							let _ = entry.insert("className", c.class.clone());
-							let _ = entry.insert("name", c.name.clone());
+						let _ = entry.insert("id", c.id);
+						let _ = entry.insert("className", c.class.clone());
+						let _ = entry.insert("name", c.name.clone());
 
-							let mut hp = json::JsonValue::new_object();
-							let _ = hp.insert("current", 100);
-							let _ = hp.insert("max", 100);
+						let mut hp = json::JsonValue::new_object();
+						let _ = hp.insert("current", 100);
+						let _ = hp.insert("max", 100);
 
-							let mut mana = json::JsonValue::new_object();
-							let _ = mana.insert("current", 100);
-							let _ = mana.insert("max", 100);
+						let mut mana = json::JsonValue::new_object();
+						let _ = mana.insert("current", 100);
+						let _ = mana.insert("max", 100);
 
-							let _ = entry.insert("hp", hp);
-							let _ = entry.insert("mana", mana);
+						let _ = entry.insert("hp", hp);
+						let _ = entry.insert("mana", mana);
 
-							let _ = obj.push(entry);
-						}
-						let msg = json::stringify_pretty(obj, 4);
-						WebClient::sendResponse(
-							WebResponse::Ok(msg, "text/json".to_string())
-						);
+						let _ = obj.push(entry);
 					}
+					let msg = json::stringify_pretty(obj, 4);
+					WebClient::sendResponse(
+						WebResponse::Ok(msg, "text/json".to_string())
+					);
 				},
 				ServerMessage::SaveGame(checkpoint) =>
 				{
@@ -332,6 +318,25 @@ impl Server
 					WebClient::sendResponse(WebResponse::Ok(
 						self.state.chatHistory.len().to_string(), "text/json".to_string()
 					));
+				},
+				ServerMessage::GetSettings =>
+				{
+					let mut msg = json::JsonValue::new_object();
+
+					let _ = msg.insert("Сервер", json::object!
+					{
+						maxPlayersCount: json::object!
+						{
+							type: "range",
+							name: "Количество игроков",
+							value: self.config.maxPlayersCount,
+							props: json::object! { min: 1, max: 10 }
+						}
+					});
+
+					WebClient::sendResponse(WebResponse::Ok(
+						json::stringify(msg), "text/json".to_string()
+					));
 				}
 			}
 		}
@@ -352,14 +357,14 @@ impl Server
 
 	fn broadcastState(&mut self)
 	{
-		for i in 0..5
+		for i in 0..self.config.maxPlayersCount as usize
 		{
 			let addr = self.clients[i].udp;
 			if addr.is_none() { continue; }
 			let addr = addr.unwrap();
 
 			let mut buffer: Vec<u8> = vec![];
-			for id in 0..5
+			for id in 0..self.config.maxPlayersCount as usize
 			{
 				if self.playersState[id][0] == 0 || id == i { continue; }
 				buffer.append(&mut self.playersState[id].to_vec());
@@ -378,7 +383,7 @@ impl Server
 	
 	fn getAvailablePlayerID(&self) -> u8
 	{
-		for i in 0..5
+		for i in 0..self.config.maxPlayersCount as usize
 		{
 			if self.clients[i].id == 0 { return (i + 1) as u8; }
 		}
@@ -387,7 +392,7 @@ impl Server
 
 	fn getPlayerID(&self, name: &str) -> u8
 	{
-		for i in 0..5
+		for i in 0..self.config.maxPlayersCount as usize
 		{
 			if self.clients[i].name == name { return (i + 1) as u8; }
 		}

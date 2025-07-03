@@ -63,7 +63,6 @@ impl WebClient
 	fn get(&mut self, data: String) -> Option<ServerMessage>
 	{
 		let data = data.split("?").collect::<Vec<&str>>()[0];
-		println!("Handling GET: {data}");
 		if data == "/"
 		{
 			WebClient::sendResponse(
@@ -109,7 +108,6 @@ impl WebClient
 
 	fn post(&mut self, data: String) -> Option<ServerMessage>
 	{
-		println!("Handling POST: {data}");
 		match json::parse(&data)
 		{
 			Ok(parsed) => {
@@ -153,6 +151,7 @@ impl WebClient
 		}
 		else if cmd == "state" { return Some(ServerMessage::GameState); }
 		else if cmd == "chatLength" { return Some(ServerMessage::ChatLength); }
+		else if cmd == "getSettings" { return Some(ServerMessage::GetSettings); }
 		else
 		{
 			println!("Unknown command: {cmd}");
@@ -172,7 +171,6 @@ impl WebClient
 			}
 			let tcp = c.tcp.as_mut().unwrap();
 			let msg = code.build();
-			println!("Sending {} bytes to web client", msg.len());
 			match tcp.write_all(&msg)
 			{
 				Ok(_) => {},
