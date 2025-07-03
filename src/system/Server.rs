@@ -331,6 +331,20 @@ impl Server
 							name: "Количество игроков",
 							value: self.config.maxPlayersCount,
 							props: json::object! { min: 1, max: 10 }
+						},
+						port: json::object!
+						{
+							type: "range",
+							name: "Игровой порт",
+							value: self.config.port,
+							props: json::object! { min: 1024, max: u16::MAX }
+						},
+						tickRate: json::object!
+						{
+							type: "range",
+							name: "Частота обновления",
+							value: self.config.tickRate,
+							props: json::object! { min: 1, max: 100 }
 						}
 					});
 
@@ -375,7 +389,7 @@ impl Server
 		}
 	}
 
-	fn save(&self, checkpoint: String)
+	fn save(&mut self, checkpoint: String)
 	{
 		self.config.save();
 		self.state.save(checkpoint);
@@ -394,13 +408,17 @@ impl Server
 	{
 		for i in 0..self.config.maxPlayersCount as usize
 		{
-			if self.clients[i].name == name { return (i + 1) as u8; }
+			if self.clients[i].name.to_lowercase() == name.to_lowercase()
+			{
+				return (i + 1) as u8;
+			}
 		}
 		0
 	}
 
 	pub fn cmd(&mut self, executor: u8, webID: SocketAddr, txt: String)
 	{
+		let txt = txt.to_lowercase();
 		let mut args = txt.split(" ");
 		if executor == 0
 		{
@@ -418,7 +436,7 @@ impl Server
 		
 		let c = args.nth(0).unwrap_or(" ");
 
-		if c == "getPosition" && p.check(Permission::Admin)
+		if c == "getposition" && p.check(Permission::Admin)
 		{
 			let n = args.nth(0).unwrap_or(&name);
 			let id = self.getPlayerID(n);
@@ -436,7 +454,7 @@ impl Server
 			self.broadcast.push(ClientMessage::Chat(msg.clone()));
 			self.state.chatHistory.push((name.to_string(), msg));
 		}
-		else if c == "setPosition" && p.check(Permission::Admin)
+		else if c == "setposition" && p.check(Permission::Admin)
 		{
 			let n = args.nth(0).unwrap_or(&name);
 			let id = self.getPlayerID(n);
@@ -456,7 +474,7 @@ impl Server
 			));
 			self.clients[(id - 1) as usize].sendTCP(ClientMessage::SetPosition(x, y));
 		}
-		else if c == "getTime"
+		else if c == "gettime"
 		{
 			self.state.chatHistory.push((name.clone(),
 				format!("Текущее время сервера: {}", State::getDateTime())
@@ -465,4 +483,5 @@ impl Server
 	}
 
 	pub fn getWebClient(&mut self) -> &mut WebClient { &mut self.webClient }
+	pub fn getConfig(&mut self) -> &mut Config { &mut self.config }
 }

@@ -1,4 +1,4 @@
-use std::{io::{ErrorKind, Read, Write}, net::{SocketAddr, TcpStream}};
+use std::{io::{ErrorKind, Read, Write}, net::{SocketAddr, TcpStream}, time::Duration};
 
 use crate::system::Server::Server;
 
@@ -18,18 +18,22 @@ impl WebClient
 	
 	pub fn connect(&mut self, tcp: TcpStream)
 	{
-		let _ = tcp.set_nonblocking(true);
 		self.tcp.push(tcp);
 	}
 
 	pub fn update(&mut self) -> Vec<ServerMessage>
 	{
 		let mut req = vec![];
-		for tcp in &mut self.tcp
+		for i in 0..self.tcp.len()
 		{
+			if i >= self.tcp.len() { break; }
 			let buffer = &mut [0u8; 1024];
-			let addr = tcp.peer_addr().unwrap();
-			match tcp.read(buffer)
+			if self.tcp[i].peer_addr().is_err()
+			{
+				self.tcp.swap_remove(i);
+			}
+			let addr = self.tcp[i].peer_addr().unwrap();
+			match self.tcp[i].read(buffer)
 			{
 				Ok(size) =>
 				{
@@ -143,6 +147,28 @@ impl WebClient
 		else if cmd == "state" { return ServerMessage::GameState(id); }
 		else if cmd == "chatLength" { return ServerMessage::ChatLength(id); }
 		else if cmd == "getSettings" { return ServerMessage::GetSettings(id); }
+		else if cmd == "saveSettings"
+		{
+			let cfg = Server::getInstance().getConfig();
+			for (var, value) in data.entries()
+			{
+				if var == "maxPlayersCount"
+				{
+					cfg.maxPlayersCount = value.as_u8().unwrap_or(1);
+				}
+				if var == "port"
+				{
+					cfg.port = value.as_u16().unwrap_or(2018);
+				}
+				if var == "tickRate"
+				{
+					cfg.tickRate = value.as_u8().unwrap_or(1);
+					cfg.sendTime = Duration::from_secs_f32(1.0 / cfg.tickRate as f32);
+					cfg.recvTime = Duration::from_secs_f32(0.5 / cfg.tickRate as f32);
+				}
+			}
+			return ServerMessage::Invalid(id);
+		}
 		else
 		{
 			println!("Unknown command: {cmd}");

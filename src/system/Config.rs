@@ -94,8 +94,8 @@ impl Config
 					if name == "tickRate"
 					{
 						state.tickRate = value.as_u8().unwrap_or(30);
-						state.sendTime = Duration::from_secs_f32(1.0 / (state.tickRate as f32));
-						state.recvTime = Duration::from_secs_f32(0.5 / (state.tickRate as f32));
+						state.sendTime = Duration::from_secs_f32(1.0 / state.tickRate as f32);
+						state.recvTime = Duration::from_secs_f32(0.5 / state.tickRate as f32);
 					}
 				}
 			}
@@ -128,7 +128,7 @@ impl Config
 	}
 
 	pub fn save(&self)
-	{		
+	{
 		let mut settings = json::JsonValue::new_object();
 		let _ = settings.insert("maxPlayersCount", self.maxPlayersCount);
 		let _ = settings.insert("port", self.port);

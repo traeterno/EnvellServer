@@ -75,8 +75,10 @@ impl State
 		}
 	}
 
-	pub fn save(&self, checkpoint: String)
+	pub fn save(&mut self, checkpoint: String)
 	{
+		self.date = State::getDateTime();
+
 		let mut players = json::JsonValue::new_object();
 		for (ip, data) in &self.playersList
 		{
@@ -90,7 +92,7 @@ impl State
 		let mut state = json::JsonValue::new_object();
 		let _ = state.insert("players", players);
 		let _ = state.insert("checkpoint", checkpoint);
-		let _ = state.insert("date", State::getDateTime());
+		let _ = state.insert("date", self.date.clone());
 
 		let _ = std::fs::write(
 			"res/system/save.json",
