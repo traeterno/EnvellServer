@@ -348,8 +348,36 @@ impl Server
 						}
 					});
 
+					let mut perms = json::JsonValue::new_object();
+					
+					for (name, group) in &self.config.permissions
+					{
+						let p = match group
+						{
+							Permission::Player => "Игрок",
+							Permission::Admin => "Администратор",
+							Permission::Developer => "Разработчик"
+						};
+						let _ = perms.insert(&name, json::object!
+						{
+							type: "list",
+							name: name.clone(),
+							value: p,
+							props: json::array![ "Игрок", "Администратор", "Разработчик" ]
+						});
+					}
+
+					let _ = msg.insert("Разрешения игроков", perms);
+
 					WebClient::sendResponse(web, WebResponse::Ok(
 						json::stringify(msg), "text/json".to_string()
+					));
+				},
+				ServerMessage::SaveSettings(web) =>
+				{
+					println!("Настройки сервера были изменены.");
+					WebClient::sendResponse(web, WebResponse::Ok(
+						"{}".to_string(), "text/json".to_string()
 					));
 				}
 			}
@@ -373,6 +401,7 @@ impl Server
 	{
 		for i in 0..self.config.maxPlayersCount as usize
 		{
+			if i >= self.clients.len() { break; }
 			let addr = self.clients[i].udp;
 			if addr.is_none() { continue; }
 			let addr = addr.unwrap();

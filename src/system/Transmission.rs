@@ -14,7 +14,8 @@ pub enum ServerMessage
 	ChatHistory(usize, SocketAddr),
 	GameState(SocketAddr),
 	ChatLength(SocketAddr),
-	GetSettings(SocketAddr)
+	GetSettings(SocketAddr),
+	SaveSettings(SocketAddr)
 }
 
 impl ServerMessage

@@ -156,18 +156,29 @@ impl WebClient
 				{
 					cfg.maxPlayersCount = value.as_u8().unwrap_or(1);
 				}
-				if var == "port"
+				else if var == "port"
 				{
 					cfg.port = value.as_u16().unwrap_or(2018);
 				}
-				if var == "tickRate"
+				else if var == "tickRate"
 				{
 					cfg.tickRate = value.as_u8().unwrap_or(1);
 					cfg.sendTime = Duration::from_secs_f32(1.0 / cfg.tickRate as f32);
 					cfg.recvTime = Duration::from_secs_f32(0.5 / cfg.tickRate as f32);
 				}
+				else
+				{
+					cfg.setPermission(var.to_string(),
+					match value.as_str().unwrap_or("")
+					{
+						"Разработчик" => super::Config::Permission::Developer,
+						"Администратор" => super::Config::Permission::Admin,
+						_ => super::Config::Permission::Player,
+					});
+				}
 			}
-			return ServerMessage::Invalid(id);
+			cfg.save();
+			return ServerMessage::SaveSettings(id);
 		}
 		else
 		{

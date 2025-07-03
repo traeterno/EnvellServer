@@ -45,7 +45,7 @@ pub struct Config
 	pub tickRate: u8,
 	pub sendTime: Duration,
 	pub recvTime: Duration,
-	permissions: HashMap<String, Permission>,
+	pub permissions: HashMap<String, Permission>,
 }
 
 impl Default for Config
@@ -151,5 +151,10 @@ impl Config
 	{
 		if name == "WebClient" { return Permission::Developer; }
 		self.permissions.get(name).unwrap_or(&Permission::Player).clone()
+	}
+
+	pub fn setPermission(&mut self, name: String, group: Permission)
+	{
+		self.permissions.insert(name, group);
 	}
 }
