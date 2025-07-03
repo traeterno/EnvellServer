@@ -54,7 +54,7 @@ impl Default for Config
 	{
 		Self
 		{
-			maxPlayersCount: 0,
+			maxPlayersCount: 5,
 			port: 0,
 			tickRate: 1,
 			sendTime: Duration::from_secs(1),
@@ -71,7 +71,7 @@ impl Config
 		let doc = json::parse(&file);
 		if doc.is_err()
 		{
-			println!("Failed to load config: {:?}", doc.unwrap_err());
+			println!("Failed to load config: {}", doc.unwrap_err());
 			return Self::default();
 		}
 		let doc = doc.unwrap();

@@ -1,4 +1,4 @@
-use std::{io::{ErrorKind, Read, Write}, net::TcpStream};
+use std::{io::{ErrorKind, Read, Write}, net::{SocketAddr, TcpStream}};
 
 use crate::system::Server::Server;
 
@@ -6,73 +6,62 @@ use super::Transmission::{ServerMessage, WebRequest, WebResponse};
 
 pub struct WebClient
 {
-	tcp: Option<TcpStream>,
-	req: Option<String>
+	pub tcp: Vec<TcpStream>
 }
 
 impl WebClient
 {
 	pub fn new() -> Self
 	{
-		Self { tcp: None, req: None }
+		Self { tcp: vec![] }
 	}
 	
 	pub fn connect(&mut self, tcp: TcpStream)
 	{
 		let _ = tcp.set_nonblocking(true);
-		self.tcp = Some(tcp);
+		self.tcp.push(tcp);
 	}
 
-	pub fn disconnect(&mut self)
+	pub fn update(&mut self) -> Vec<ServerMessage>
 	{
-		self.tcp = None;
-	}
-
-	pub fn update(&mut self) -> Option<ServerMessage>
-	{
-		if self.tcp.is_none() { return None; }
-		let tcp = self.tcp.as_mut().unwrap();
-		let buffer = &mut [0u8; 1024];
-		match tcp.read(buffer)
+		let mut req = vec![];
+		for tcp in &mut self.tcp
 		{
-			Ok(size) =>
+			let buffer = &mut [0u8; 1024];
+			let addr = tcp.peer_addr().unwrap();
+			match tcp.read(buffer)
 			{
-				if size == 0 { return Some(ServerMessage::Disconnected); }
-				self.req = Some(String::from_utf8_lossy(&buffer[0..size]).to_string());
-			},
-			Err(_) => {}
+				Ok(size) =>
+				{
+					if size == 0 { continue; }
+					let msg = String::from_utf8_lossy(&buffer[0..size]).to_string();
+					match WebRequest::build(msg)
+					{
+						WebRequest::Invalid => continue,
+						WebRequest::Get(data) => WebClient::get(addr, data),
+						WebRequest::Post(data) => req.push(WebClient::post(addr, data))
+					}
+				},
+				Err(_) => {}
+			}
 		}
 
-		self.getRequest()
+		req
 	}
 
-	fn getRequest(&mut self) -> Option<ServerMessage>
-	{
-		if self.req.is_none() { return None; }
-		let req = self.req.clone().unwrap();
-		self.req = None;
-		let req = WebRequest::build(req);
-		match req
-		{
-			WebRequest::Invalid => None,
-			WebRequest::Get(data) => self.get(data),
-			WebRequest::Post(data) => self.post(data)
-		}
-	}
-
-	fn get(&mut self, data: String) -> Option<ServerMessage>
+	fn get(id: SocketAddr, data: String)
 	{
 		let data = data.split("?").collect::<Vec<&str>>()[0];
 		if data == "/"
 		{
-			WebClient::sendResponse(
+			WebClient::sendResponse(id,
 				WebResponse::MovedPermanently(String::from("/index.html")),
 			);
 		}
 		else
 		{
 			let path = String::from("res/web") + &data;
-			WebClient::sendResponse(
+			WebClient::sendResponse(id,
 				match std::fs::read_to_string(path.clone())
 				{
 					Ok(text) =>
@@ -103,79 +92,81 @@ impl WebClient
 				}
 			);
 		}
-		None
 	}
 
-	fn post(&mut self, data: String) -> Option<ServerMessage>
+	fn post(id: SocketAddr, data: String) -> ServerMessage
 	{
 		match json::parse(&data)
 		{
 			Ok(parsed) => {
 				let (cmd, data) = parsed.entries().nth(0).unwrap();
-				WebClient::parsePost(cmd.to_string(), data.clone())
+				WebClient::parsePost(id, cmd.to_string(), data.clone())
 			},
-			Err(_) => None
+			Err(_) => ServerMessage::Invalid(id)
 		}
 	}
 
-	fn parsePost(cmd: String, data: json::JsonValue) -> Option<ServerMessage>
+	fn parsePost(id: SocketAddr, cmd: String, data: json::JsonValue) -> ServerMessage
 	{
 		if !data.is_object()
 		{
 			println!("Wrong request: arguments should be provided as object with properties.");
-			return None;
+			return ServerMessage::Invalid(id);
 		}
 
-		if cmd == "players" { return Some(ServerMessage::PlayersList); }
+		if cmd == "players" { return ServerMessage::PlayersList(id); }
 		else if cmd == "chat"
 		{
-			for (id, value) in data.entries()
+			for (section, value) in data.entries()
 			{
-				if id == "msg"
+				if section == "msg"
 				{
-					return Some(ServerMessage::Chat(value.as_str().unwrap_or("").to_string()));
+					return ServerMessage::Chat(
+						value.as_str().unwrap_or("").to_string(),
+						id
+					);
 				}
 			}
-			return None;
+			return ServerMessage::Invalid(id);
 		}
 		else if cmd == "getChat"
 		{
-			for (id, value) in data.entries()
+			for (section, value) in data.entries()
 			{
-				if id == "messagesLength"
+				if section == "messagesLength"
 				{
-					return Some(ServerMessage::ChatHistory(value.as_usize().unwrap_or(0)));
+					return ServerMessage::ChatHistory(value.as_usize().unwrap_or(0), id);
 				}
 			}
-			return None;
+			return ServerMessage::Invalid(id);
 		}
-		else if cmd == "state" { return Some(ServerMessage::GameState); }
-		else if cmd == "chatLength" { return Some(ServerMessage::ChatLength); }
-		else if cmd == "getSettings" { return Some(ServerMessage::GetSettings); }
+		else if cmd == "state" { return ServerMessage::GameState(id); }
+		else if cmd == "chatLength" { return ServerMessage::ChatLength(id); }
+		else if cmd == "getSettings" { return ServerMessage::GetSettings(id); }
 		else
 		{
 			println!("Unknown command: {cmd}");
-			return Some(ServerMessage::Invalid);
+			return ServerMessage::Invalid(id);
 		}
 	}
 
-	pub fn sendResponse(code: WebResponse)
+	pub fn sendResponse(id: SocketAddr, code: WebResponse)
 	{
-		std::thread::spawn(||
+		let c = Server::getInstance().getWebClient();
+		let msg = code.build();
+		for i in 0..c.tcp.len()
 		{
-			let c = Server::getInstance().getWebClient();
-			if c.tcp.is_none()
+			let tcp = &mut c.tcp[i];
+			if tcp.peer_addr().unwrap() == id
 			{
-				println!("Tried to send response to empty TCP stream");
-				return;
+				match tcp.write_all(&msg)
+				{
+					Ok(_) => {},
+					Err(x) => { println!("Error occured when sending response: {x:?}"); }
+				}
+				c.tcp.remove(i);
+				break;
 			}
-			let tcp = c.tcp.as_mut().unwrap();
-			let msg = code.build();
-			match tcp.write_all(&msg)
-			{
-				Ok(_) => {},
-				Err(x) => { println!("Error occured when sending response: {x:?}"); }
-			}
-		});
+		}
 	}
 }

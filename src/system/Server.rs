@@ -1,5 +1,5 @@
 use std::time::Instant;
-use std::net::{TcpListener, UdpSocket};
+use std::net::{SocketAddr, TcpListener, UdpSocket};
 
 use super::WebClient::WebClient;
 use super::Transmission::{ClientMessage, ServerMessage, WebResponse};
@@ -109,9 +109,13 @@ impl Server
 			}
 		}
 
-		if let Ok((tcp, _)) = self.webListener.accept()
+		for client in self.webListener.incoming()
 		{
-			self.webClient.connect(tcp);
+			match client
+			{
+				Ok(tcp) => self.webClient.connect(tcp),
+				Err(_) => break
+			}
 		}
 	}
 
@@ -119,9 +123,9 @@ impl Server
 	{
 		if self.recvTimer.elapsed() > self.config.recvTime
 		{
-			if let Some(req) = self.webClient.update()
+			for msg in self.webClient.update()
 			{
-				self.requests.push((0, req));
+				self.requests.push((0, msg));
 			}
 	
 			for c in &mut self.clients
@@ -175,11 +179,11 @@ impl Server
 		{
 			match msg
 			{
-				ServerMessage::Invalid =>
+				ServerMessage::Invalid(web) =>
 				{
 					if id == 0
 					{
-						WebClient::sendResponse(WebResponse::Ok(
+						WebClient::sendResponse(web, WebResponse::Ok(
 							String::from("{ \"error\": \"Invalid or unknown request\" }"),
 							String::from("text/json")
 						));
@@ -206,11 +210,7 @@ impl Server
 				},
 				ServerMessage::Disconnected =>
 				{
-					if id == 0
-					{
-						self.webClient.disconnect();
-					}
-					else
+					if id != 0
 					{
 						println!("P{} disconnected.", id);
 						self.clients[(id - 1) as usize] = Client::default();
@@ -218,12 +218,12 @@ impl Server
 						self.broadcast.push(ClientMessage::Disconnected(id));
 					}
 				},
-				ServerMessage::Chat(msg) =>
+				ServerMessage::Chat(msg, web) =>
 				{
 					println!("P{id}: {msg}");
 					let mut text = msg.clone();
 					let c = text.remove(0);
-					if c == '/' { self.cmd(id, text); }
+					if c == '/' { self.cmd(id, web, text); }
 					else
 					{
 						let n =
@@ -233,14 +233,14 @@ impl Server
 						self.state.chatHistory.push((n.clone(), msg.clone()));
 						if id == 0
 						{
-							WebClient::sendResponse(WebResponse::Ok(
+							WebClient::sendResponse(web, WebResponse::Ok(
 								String::from("{ \"msg\": \"") + &n + ": " + &msg + "\" }",
 								"text/json".to_string()
 							));
 						}
 					}
 				},
-				ServerMessage::PlayersList =>
+				ServerMessage::PlayersList(web) =>
 				{
 					let mut obj = json::JsonValue::new_array();
 					for c in &self.clients
@@ -266,7 +266,7 @@ impl Server
 						let _ = obj.push(entry);
 					}
 					let msg = json::stringify_pretty(obj, 4);
-					WebClient::sendResponse(
+					WebClient::sendResponse(web,
 						WebResponse::Ok(msg, "text/json".to_string())
 					);
 				},
@@ -275,7 +275,7 @@ impl Server
 					println!("Game saved on {checkpoint}.");
 					self.save(checkpoint);
 				},
-				ServerMessage::ChatHistory(mut start) =>
+				ServerMessage::ChatHistory(mut start, web) =>
 				{
 					if start > self.state.chatHistory.len() { start = 0; }
 					let count = self.state.chatHistory.len() - start;
@@ -291,11 +291,11 @@ impl Server
 						let _ = obj.insert("msg", msg.clone());
 						let _ = buf.push(obj);
 					}
-					WebClient::sendResponse(WebResponse::Ok(
+					WebClient::sendResponse(web, WebResponse::Ok(
 						json::stringify(buf), "text/json".to_string()
 					));
 				},
-				ServerMessage::GameState =>
+				ServerMessage::GameState(web) =>
 				{
 					let mut msg = json::JsonValue::new_array();
 
@@ -309,17 +309,17 @@ impl Server
 						}
 					});
 
-					WebClient::sendResponse(WebResponse::Ok(
+					WebClient::sendResponse(web, WebResponse::Ok(
 						json::stringify(msg), "text/json".to_string()
 					));
 				},
-				ServerMessage::ChatLength =>
+				ServerMessage::ChatLength(web) =>
 				{
-					WebClient::sendResponse(WebResponse::Ok(
+					WebClient::sendResponse(web, WebResponse::Ok(
 						self.state.chatHistory.len().to_string(), "text/json".to_string()
 					));
 				},
-				ServerMessage::GetSettings =>
+				ServerMessage::GetSettings(web) =>
 				{
 					let mut msg = json::JsonValue::new_object();
 
@@ -334,7 +334,7 @@ impl Server
 						}
 					});
 
-					WebClient::sendResponse(WebResponse::Ok(
+					WebClient::sendResponse(web, WebResponse::Ok(
 						json::stringify(msg), "text/json".to_string()
 					));
 				}
@@ -399,13 +399,13 @@ impl Server
 		0
 	}
 
-	pub fn cmd(&mut self, executor: u8, txt: String)
+	pub fn cmd(&mut self, executor: u8, webID: SocketAddr, txt: String)
 	{
 		let mut args = txt.split(" ");
 		if executor == 0
 		{
 			println!("Центр мира вызвал команду: {txt}");
-			WebClient::sendResponse(WebResponse::Ok(
+			WebClient::sendResponse(webID, WebResponse::Ok(
 				String::from("{ \"msg\": \"") + &txt + "\" }",
 				"text/json".to_string()
 			));

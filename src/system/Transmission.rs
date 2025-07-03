@@ -1,18 +1,20 @@
 // Incoming messages
 
+use std::net::SocketAddr;
+
 #[derive(Debug, Clone)]
 pub enum ServerMessage
 {
-	Invalid,
+	Invalid(SocketAddr),
 	Register(String),
-	Chat(String),
+	Chat(String, SocketAddr),
 	Disconnected,
-	PlayersList,
+	PlayersList(SocketAddr),
 	SaveGame(String),
-	ChatHistory(usize),
-	GameState,
-	ChatLength,
-	GetSettings
+	ChatHistory(usize, SocketAddr),
+	GameState(SocketAddr),
+	ChatLength(SocketAddr),
+	GetSettings(SocketAddr)
 }
 
 impl ServerMessage
@@ -26,9 +28,9 @@ impl ServerMessage
 		match code
 		{
 			1 => Self::Register(String::from_utf8_lossy(&args).to_string()),
-			2 => Self::Chat(String::from_utf8_lossy(&args).to_string()),
+			2 => Self::Chat(String::from_utf8_lossy(&args).to_string(), "0.0.0.0:0".parse().unwrap()),
 			3 => Self::SaveGame(String::from_utf8_lossy(&args).to_string()),
-			_ => Self::Invalid
+			_ => Self::Invalid("0.0.0.0:0".parse().unwrap())
 		}
 	}
 }
