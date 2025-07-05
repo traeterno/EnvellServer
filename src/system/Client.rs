@@ -24,7 +24,7 @@ impl Client
 			udp: None
 		}
 	}
-	pub fn connect(tcp: TcpStream, id: u8, name: String, class: String, udpPort: u16, tickRate: u8, checkpoint: String) -> Self
+	pub fn connect(tcp: TcpStream, id: u8, name: String, class: String) -> Self
 	{
 		let _ = tcp.set_nodelay(true);
 		let _ = tcp.set_nonblocking(true);
@@ -38,7 +38,7 @@ impl Client
 			udp: None
 		};
 
-		client.sendTCP(ClientMessage::Login(id, name, class, udpPort, tickRate, checkpoint));
+		client.sendTCP(ClientMessage::Login(id, name, class));
 
 		client
 	}

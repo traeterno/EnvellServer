@@ -1,7 +1,6 @@
-// Incoming messages
-
 use std::net::SocketAddr;
 
+// Incoming messages
 #[derive(Debug, Clone)]
 pub enum ServerMessage
 {
@@ -40,10 +39,11 @@ impl ServerMessage
 #[derive(Debug, Clone)]
 pub enum ClientMessage
 {
-	Login(u8, String, String, u16, u8, String),
+	Login(u8, String, String),
 	Disconnected(u8),
 	Chat(String),
-	SetPosition(u16, u16)
+	SetPosition(u16, u16),
+	GetInfo(u16, u8, String, u8)
 }
 
 impl ClientMessage
@@ -52,18 +52,20 @@ impl ClientMessage
 	{
 		match self
 		{
-			Self::Login(id, name, class, udpPort, tickRate, checkpoint) => [
+			Self::Login(
+				id, name, class) => [
 					&[1], &[id],
 					name.as_bytes(), &[0],
-					class.as_bytes(), &[0],
-					&udpPort.to_le_bytes(),
-					&[tickRate],
-					checkpoint.as_bytes()
+					class.as_bytes()
 				].concat().to_vec(),
 			Self::Disconnected(id) => vec![2, id],
 			Self::Chat(text) => [&[3], text.as_bytes()].concat().to_vec(),
 			Self::SetPosition(x, y) => [&[4u8] as &[u8],
 					&x.to_le_bytes(), &y.to_le_bytes()
+				].concat().to_vec(),
+			Self::GetInfo(udp, tickRate, checkpoint, playersCount) => [
+					&[5u8] as &[u8], &udp.to_le_bytes(), &[tickRate],
+					&[playersCount], checkpoint.as_bytes()
 				].concat().to_vec()
 		}
 	}

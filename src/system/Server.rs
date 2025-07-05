@@ -101,10 +101,7 @@ impl Server
 					tcp,
 					id,
 					name.clone(),
-					class,
-					self.udp.local_addr().unwrap().port(),
-					self.config.tickRate,
-					self.state.checkpoint.clone()
+					class
 				);
 			}
 		}
@@ -196,9 +193,6 @@ impl Server
 
 					c.sendTCP(ClientMessage::Login(
 						id, name.clone(), String::from("unknown"),
-						self.udp.local_addr().unwrap().port(),
-						self.config.tickRate,
-						self.state.checkpoint.clone()
 					));
 
 					self.state.setPlayerInfo(
@@ -243,32 +237,24 @@ impl Server
 				ServerMessage::PlayersList(web) =>
 				{
 					let mut obj = json::JsonValue::new_array();
+
 					for c in &self.clients
 					{
 						if c.id == 0 { continue; }
-						let mut entry = json::JsonValue::new_object();
 
-						let _ = entry.insert("id", c.id);
-						let _ = entry.insert("className", c.class.clone());
-						let _ = entry.insert("name", c.name.clone());
-
-						let mut hp = json::JsonValue::new_object();
-						let _ = hp.insert("current", 100);
-						let _ = hp.insert("max", 100);
-
-						let mut mana = json::JsonValue::new_object();
-						let _ = mana.insert("current", 100);
-						let _ = mana.insert("max", 100);
-
-						let _ = entry.insert("hp", hp);
-						let _ = entry.insert("mana", mana);
-
-						let _ = obj.push(entry);
+						let _ = obj.push(json::object!
+						{
+							id: c.id,
+							className: c.class.clone(),
+							name: c.name.clone(),
+							hp: { current: 100, max: 100 },
+							mana: { current: 100, max: 100 }
+						});
 					}
-					let msg = json::stringify_pretty(obj, 4);
-					WebClient::sendResponse(web,
-						WebResponse::Ok(msg, "text/json".to_string())
-					);
+
+					WebClient::sendResponse(web, WebResponse::Ok(
+						json::stringify(obj), "text/json".to_string()
+					));
 				},
 				ServerMessage::SaveGame(checkpoint) =>
 				{
